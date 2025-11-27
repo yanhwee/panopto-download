@@ -1,18 +1,12 @@
 import time
 import os
+import sys
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 import yt_dlp
 
-def main():
-    print("--- Panopto Video Downloader ---")
-    video_url = input("Enter the Panopto Video URL: ").strip()
-
-    if not video_url:
-        print("Error: No URL provided.")
-        return
-
+def get_cookies_from_browser(login_url):
     print("\nLaunching browser... Please log in to your institution's page if prompted.")
     print("The script will wait for you to navigate to the video page.")
 
@@ -24,51 +18,91 @@ def main():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        driver.get(video_url)
+        driver.get(login_url)
 
         # Wait for user to login and the video to load
-        # We'll check for a specific element or just wait for a manual confirmation?
-        # A simple robust way is to ask the user to press Enter in the console once the video is visible.
         print("\nACTION REQUIRED: Log in in the browser window.")
         input("Press Enter here once the video page is fully loaded and you can see the player...")
 
         # Get cookies from the browser
         selenium_cookies = driver.get_cookies()
-        
-        # Convert cookies to a format yt-dlp accepts (Netscape format or dict)
-        # yt-dlp accepts a dict of key-value pairs in the 'cookiefile' option, 
-        # but passing them directly via 'http_headers' or using a cookie jar is better.
-        # Actually, yt-dlp can take cookies as a simple key=value string in headers 
-        # or we can construct a cookie jar.
-        
-        # Let's try to pass cookies to yt-dlp.
-        # The easiest way programmatically is often to save them to a file or format them for the 'cookies' param if supported,
-        # but yt-dlp python embedding supports a 'cookiefile'. 
-        # We can also pass 'http_headers' with 'Cookie'.
-        
         cookie_header = "; ".join([f"{c['name']}={c['value']}" for c in selenium_cookies])
+        user_agent = driver.execute_script("return navigator.userAgent;")
         
-        print("\nCookies extracted. Starting download...")
-        
-        # yt-dlp options
+        return cookie_header, user_agent
+
+    finally:
+        driver.quit()
+
+def download_video(url, cookies, user_agent):
+    print(f"\n[Downloading] {url}")
+    
+    # Create videos directory if it doesn't exist
+    output_dir = "videos"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    try:
         ydl_opts = {
             'http_headers': {
-                'Cookie': cookie_header,
-                'User-Agent': driver.execute_script("return navigator.userAgent;")
+                'Cookie': cookies,
+                'User-Agent': user_agent
             },
-            'outtmpl': '%(title)s.%(ext)s',
+            'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
             'format': 'best',
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
-
-        print("\nDownload complete!")
-
+            ydl.download([url])
+        print("Download complete!")
     except Exception as e:
-        print(f"\nAn error occurred: {e}")
-    finally:
-        driver.quit()
+        print(f"Error downloading {url}: {e}")
+
+def main():
+    print("--- Panopto Video Downloader ---")
+    
+    # Check for command line arguments
+    if len(sys.argv) > 1:
+        user_input = sys.argv[1]
+        print(f"Using input from command line: {user_input}")
+    else:
+        user_input = input("Enter the Panopto Video URL OR path to a text file (e.g., urls.txt): ").strip()
+
+    if not user_input:
+        print("Error: No input provided.")
+        return
+
+    urls = []
+    if os.path.isfile(user_input):
+        print(f"Reading URLs from file: {user_input}")
+        with open(user_input, 'r') as f:
+            urls = [line.strip() for line in f if line.strip()]
+        if not urls:
+            print("Error: File is empty.")
+            return
+    else:
+        # Basic validation to prevent crashing on "a"
+        if not user_input.startswith(('http://', 'https://')):
+             print("Error: Invalid URL. Please provide a full URL starting with http:// or https://")
+             return
+        urls = [user_input]
+
+    print(f"Found {len(urls)} video(s) to download.")
+
+    # 1. Log in once using the first URL
+    try:
+        cookies, user_agent = get_cookies_from_browser(urls[0])
+        print("\nCookies extracted. Starting batch download...")
+    except Exception as e:
+        print(f"Login failed: {e}")
+        return
+
+    # 2. Download all videos
+    for i, url in enumerate(urls):
+        print(f"\nProcessing {i+1}/{len(urls)}...")
+        download_video(url, cookies, user_agent)
+
+    print("\nAll tasks finished.")
 
 if __name__ == "__main__":
     main()
