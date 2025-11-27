@@ -6,6 +6,8 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 import yt_dlp
 
+import tempfile
+
 def get_cookies_from_browser(login_url):
     print("\nLaunching browser... Please log in to your institution's page if prompted.")
     print("The script will wait for you to navigate to the video page.")
@@ -26,15 +28,33 @@ def get_cookies_from_browser(login_url):
 
         # Get cookies from the browser
         selenium_cookies = driver.get_cookies()
-        cookie_header = "; ".join([f"{c['name']}={c['value']}" for c in selenium_cookies])
         user_agent = driver.execute_script("return navigator.userAgent;")
         
-        return cookie_header, user_agent
+        return selenium_cookies, user_agent
 
     finally:
         driver.quit()
 
-def download_video(url, cookies, user_agent):
+def create_netscape_cookie_file(selenium_cookies):
+    """Writes selenium cookies to a temp file in Netscape format."""
+    fd, path = tempfile.mkstemp(suffix=".txt", text=True)
+    with os.fdopen(fd, 'w') as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        for cookie in selenium_cookies:
+            # Netscape format: domain, flag, path, secure, expiration, name, value
+            domain = cookie.get('domain', '')
+            # The flag is TRUE if the domain starts with a dot
+            flag = "TRUE" if domain.startswith('.') else "FALSE"
+            path_str = cookie.get('path', '/')
+            secure = "TRUE" if cookie.get('secure') else "FALSE"
+            expiry = str(int(cookie.get('expiry', time.time() + 3600)))
+            name = cookie.get('name', '')
+            value = cookie.get('value', '')
+            
+            f.write(f"{domain}\t{flag}\t{path_str}\t{secure}\t{expiry}\t{name}\t{value}\n")
+    return path
+
+def download_video(url, cookie_file, user_agent):
     print(f"\n[Downloading] {url}")
     
     # Create videos directory if it doesn't exist
@@ -44,8 +64,8 @@ def download_video(url, cookies, user_agent):
 
     try:
         ydl_opts = {
+            'cookiefile': cookie_file,
             'http_headers': {
-                'Cookie': cookies,
                 'User-Agent': user_agent
             },
             'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
@@ -90,17 +110,25 @@ def main():
     print(f"Found {len(urls)} video(s) to download.")
 
     # 1. Log in once using the first URL
+    cookie_file_path = None
     try:
         cookies, user_agent = get_cookies_from_browser(urls[0])
-        print("\nCookies extracted. Starting batch download...")
+        # Create a temp cookie file
+        cookie_file_path = create_netscape_cookie_file(cookies)
+        print("\nCookies extracted and secured. Starting batch download...")
     except Exception as e:
         print(f"Login failed: {e}")
         return
 
     # 2. Download all videos
-    for i, url in enumerate(urls):
-        print(f"\nProcessing {i+1}/{len(urls)}...")
-        download_video(url, cookies, user_agent)
+    try:
+        for i, url in enumerate(urls):
+            print(f"\nProcessing {i+1}/{len(urls)}...")
+            download_video(url, cookie_file_path, user_agent)
+    finally:
+        # Cleanup temp file
+        if cookie_file_path and os.path.exists(cookie_file_path):
+            os.remove(cookie_file_path)
 
     print("\nAll tasks finished.")
 

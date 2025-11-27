@@ -31,3 +31,4 @@
 - [x] Improve CLI: Support command line arguments <!-- id: 26 -->
 - [x] Update process artifacts (Phase 2.1 & 3) <!-- id: 27 -->
 - [x] Organize downloads into 'videos' folder <!-- id: 28 -->
+- [x] Security Hardening: Secure Cookie Handling <!-- id: 29 -->
